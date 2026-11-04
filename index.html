@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Подтверждение заказа — Service Center</title>
+  <style>
+    *{box-sizing:border-box} body{margin:0;padding:24px 14px;background:#f3f5f8;color:#172033;font:16px/1.5 Arial,sans-serif}
+    .card{max-width:520px;margin:30px auto;background:#fff;border-radius:18px;padding:24px;box-shadow:0 8px 30px #17203312}
+    h1{font-size:23px;margin:0 0 8px} .muted{color:#657087}.row{display:flex;justify-content:space-between;gap:16px;padding:11px 0;border-bottom:1px solid #edf0f4}
+    .row span:first-child{color:#657087}.row strong{text-align:right;overflow-wrap:anywhere}
+    .buttons{display:flex;gap:10px;margin-top:22px}.buttons button{flex:1;border:0;border-radius:11px;padding:14px 10px;font-size:16px;font-weight:700;cursor:pointer}
+    #yes{background:#176b43;color:white} #no{background:#f0e9e9;color:#9a2929}
+    button:disabled{opacity:.55;cursor:wait}.status{margin-top:18px;padding:12px;border-radius:10px;background:#f1f4f8}
+    .error{background:#fff0f0;color:#9a2929}.hidden{display:none}
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Service Center</h1>
+    <p class="muted">Проверьте условия ремонта и подтвердите заказ.</p>
+    <div id="loading" class="status">Загружаем информацию о заказе…</div>
+    <div id="details" class="hidden">
+      <div class="row"><span>Номер заказа</span><strong id="number">—</strong></div>
+      <div class="row"><span>Телефон</span><strong id="model">—</strong></div>
+      <div class="row"><span>Неисправность</span><strong id="problem">—</strong></div>
+      <div class="row"><span>Запчасти</span><strong id="parts">—</strong></div>
+      <div class="row"><span>Работа</span><strong id="repair">—</strong></div>
+      <div class="row"><span>Итого</span><strong id="total">—</strong></div>
+      <div class="buttons">
+        <button id="yes" type="button">Подтвердить</button>
+        <button id="no" type="button">Отказаться</button>
+      </div>
+    </div>
+    <div id="message" class="status hidden" role="status"></div>
+  </main>
+<script>
+  // Вставьте те же Project URL и Publishable key, что используются в Android-приложении.
+  const SUPABASE_URL = "https://YOUR_PROJECT.supabase.co";
+  const SUPABASE_KEY = "YOUR_SB_PUBLISHABLE_KEY";
+
+  const token = new URLSearchParams(location.search).get("token");
+  const $ = id => document.getElementById(id);
+  const money = value => new Intl.NumberFormat("ru-RU", {style:"currency",currency:"RUB"}).format(Number(value || 0));
+  const showMessage = (text, error=false) => {
+    $("message").textContent = text;
+    $("message").classList.remove("hidden");
+    $("message").classList.toggle("error", error);
+  };
+  async function rpc(name, body) {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "apikey":SUPABASE_KEY,
+        "Authorization":`Bearer ${SUPABASE_KEY}`
+      },
+      body:JSON.stringify(body)
+    });
+    const raw = await response.text();
+    let data;
+    try { data = raw ? JSON.parse(raw) : null; } catch { data = raw; }
+    if (!response.ok) throw new Error(data?.message || data?.details || `Ошибка сервера: ${response.status}`);
+    return data;
+  }
+  function unwrap(value) {
+    if (Array.isArray(value)) return value[0] || {};
+    return value || {};
+  }
+  async function loadOrder() {
+    if (!token) throw new Error("В ссылке отсутствует номер подтверждения.");
+    const order = unwrap(await rpc("get_order_for_confirmation", {p_token:token}));
+    if (!order || Object.keys(order).length === 0) throw new Error("Заказ не найден или ссылка недействительна.");
+    $("number").textContent = order.order_number ?? "—";
+    $("model").textContent = order.phone_model ?? "—";
+    $("problem").textContent = order.problem ?? "—";
+    $("parts").textContent = money(order.parts_cost);
+    $("repair").textContent = money(order.repair_cost);
+    $("total").textContent = money(order.total_cost ?? (Number(order.parts_cost||0)+Number(order.repair_cost||0)));
+    $("details").classList.remove("hidden");
+    $("loading").classList.add("hidden");
+    if (order.status && order.status !== "pending") {
+      $("yes").disabled = $("no").disabled = true;
+      showMessage(order.status === "confirmed" ? "Этот заказ уже подтверждён." : "По этому заказу уже получен отказ.");
+    }
+  }
+  async function respond(accepted) {
+    $("yes").disabled = $("no").disabled = true;
+    try {
+      await rpc("respond_to_order", {p_token:token, p_accepted:accepted});
+      showMessage(accepted ? "Спасибо! Заказ подтверждён." : "Вы отказались от заказа.");
+    } catch (e) {
+      $("yes").disabled = $("no").disabled = false;
+      showMessage(e.message || "Не удалось отправить ответ. Попробуйте позже.", true);
+    }
+  }
+  $("yes").addEventListener("click", () => respond(true));
+  $("no").addEventListener("click", () => respond(false));
+  loadOrder().catch(e => {
+    $("loading").textContent = e.message || "Не удалось загрузить заказ.";
+    $("loading").classList.add("error");
+  });
+</script>
+</body>
+</html>
